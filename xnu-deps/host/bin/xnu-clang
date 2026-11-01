@@ -8,11 +8,17 @@ case "$(basename "$0")" in *++) drv=clang++; extra=(-fno-use-cxa-atexit);; *) dr
 args=()
 for a in "$@"; do
   case "$a" in
+    # clang-11 (theos) needs the old name and the opt-in companion for these two
+    -fsanitize-ignorelist=*) args+=("-fsanitize-blacklist=${a#-fsanitize-ignorelist=}");;
+    -ftrivial-auto-var-init=zero) args+=("$a" -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang);;
     -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang) ;;
     -fapple-kext-vtable-verify|-Wno-vla-cxx-extension) ;;
     -Werror|-Werror=*|-Weverything|-pedantic-errors) ;;
     *) args+=("$a");;
   esac
 done
-exec /usr/bin/$drv -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
+# was: /usr/bin/$drv — not present on all Linux hosts; any real clang works
+# (theos's toolchain clang accepts every Apple flag this wrapper passes).
+# clang-11 (theos) predates --ld-path; -B<dir> makes the darwin driver find ld64 as `ld`.
+exec "${XNU_TARGET_CLANG:-$HOME/theos/toolchain/linux/iphone/bin}/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} -B"$HB" \
   -w "${extra[@]}" "${args[@]}"

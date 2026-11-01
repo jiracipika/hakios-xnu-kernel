@@ -37,6 +37,7 @@ if [ -n "${QEMU_ESP:-}" ]; then
 fi
 timeout "$T" qemu-system-aarch64 -M virt,gic-version=${QEMU_GIC:-3} -cpu cortex-a76 -smp ${QEMU_SMP:-1} -m ${QEMU_MEM:-6G} \
   -accel tcg,tb-size=${QEMU_TB_MB:-384} \
+  ${QEMU_SHARE_DIR:+-L "$QEMU_SHARE_DIR"} \
   -drive if=pflash,format=raw,readonly=on,file="$EFI" \
   -drive if=pflash,format=raw,file=vars.fd \
   -drive file=fat:rw:esp,format=raw,if=virtio \
