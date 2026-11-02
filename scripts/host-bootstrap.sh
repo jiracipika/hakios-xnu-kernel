@@ -25,6 +25,8 @@ mkdir -p "$HOME/.local/bin"
 [ -e "$HOME/.local/bin/clang" ] || printf '#!/bin/sh\nexec gcc "$@"\n' >"$HOME/.local/bin/clang"
 [ -e "$HOME/.local/bin/clang++" ] || printf '#!/bin/sh\nexec g++ "$@"\n' >"$HOME/.local/bin/clang++"
 chmod +x "$HOME/.local/bin/clang" "$HOME/.local/bin/clang++"
+# XNU's lldbmacros install step runs `env python`; most Linux boxes ship only python3
+[ -e "$HOME/.local/bin/python" ] || ln -s "$(command -v python3)" "$HOME/.local/bin/python"
 
 echo "== host-bootstrap start $(date -u) =="
 
@@ -99,7 +101,7 @@ if [ ! -f "$HOME/.local/aavmf/root/usr/share/AAVMF/AAVMF_CODE.no-secboot.fd" ]; 
   f="qemu-efi-aarch64_2026.05-2ubuntu3_all.deb"
   url_ok "https://archive.ubuntu.com/ubuntu/pool/main/e/edk2/$f" || exit 1
   curl -fsSL --max-time 180 "https://archive.ubuntu.com/ubuntu/pool/main/e/edk2/$f" -o "$f" \
-    && dpkg-deb -x "$f" root && echo "ok: AAVMF"
+    && dpkg-deb -x "$f" . && echo "ok: AAVMF" || { echo "FAILED: AAVMF download/extract"; exit 1; }
   cd - >/dev/null
 fi
 
@@ -129,7 +131,7 @@ echo "== qemu boot =="
 # extracted QEMU's deb libraries (libfuse3 lands under /lib, the rest under /usr/lib)
 export LD_LIBRARY_PATH="$HOME/.local/qemu-deb/root/usr/lib/x86_64-linux-gnu:$HOME/.local/qemu-deb/root/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export QEMU_SHARE_DIR="$HOME/.local/qemu-deb/root/usr/share/qemu"
-export QEMU_EFI="$HOME/.local/aavmf/root/usr/share/AAVMF/AAVMF_CODE.no-secboot.fd"
-export QEMU_VARS="$HOME/.local/aavmf/root/usr/share/AAVMF/AAVMF_VARS.fd"
+export QEMU_EFI="$HOME/.local/aavmf/usr/share/AAVMF/AAVMF_CODE.no-secboot.fd"
+export QEMU_VARS="$HOME/.local/aavmf/usr/share/AAVMF/AAVMF_VARS.fd"
 make qemu-open SECS=45 SHELL=/bin/bash || { echo "BASELINE-FAIL: qemu"; exit 1; }
 echo "BASELINE-DONE"
