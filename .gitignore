@@ -38,6 +38,8 @@
 !/xnu-deps/
 !/prebuilt/
 !/wifi/
+!/AGENTS.md
+!/scripts/
 
 __pycache__/
 *~
