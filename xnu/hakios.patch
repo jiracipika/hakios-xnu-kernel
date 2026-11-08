@@ -3363,6 +3363,102 @@ index 65144c74239c..ab6260d52d84 100644
  	uart_putc(c);
  }
  
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 997a4aba65a1..910da6d1dc06 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -32,52 +32,7 @@
+ #include <machine/pal_hibernate.h>
+ #endif /* HIBERNATION */
+ 
+-struct pe_serial_functions {
+-	/* Initialize the underlying serial hardware. */
+-	void (*init) (void);
+-
+-	/* Return a non-zero value if the serial interface is ready to send more data. */
+-	unsigned int (*transmit_ready) (void);
+-
+-	/* Write a single byte of data to serial. */
+-	void (*transmit_data) (uint8_t c);
+-
+-	/* Return a non-zero value if there's a byte of data available. */
+-	unsigned int (*receive_ready) (void);
+-
+-	/* Read a single byte from serial. */
+-	uint8_t (*receive_data) (void);
+-
+-	/* Enables IRQs from this device. */
+-	void (*enable_irq) (void);
+-
+-	/* Disables IRQs from this device and reports whether IRQs were enabled. */
+-	bool (*disable_irq) (void);
+-
+-	/* Clears this device's IRQs targeting this agent, returning true if at least one IRQ was cleared. */
+-	bool (*acknowledge_irq) (void);
+-
+-	/**
+-	 * Whether this serial driver can handle irqs. This value should be set by
+-	 * querying the device tree to see if the serial device has interrupts
+-	 * associated with it.
+-	 *
+-	 * For a device to support IRQs:
+-	 *   - enable_irq, disable_irq, and acknowledge_irq must be non-null
+-	 *   - The AppleSerialShim kext must be able to match to the serial device
+-	 *     in the IORegistry and call serial_enable_irq with the proper
+-	 *     serial_device_t
+-	 *   - The device tree entry for the serial device should have an interrupt
+-	 *     associated with it.
+-	 */
+-	bool has_irq;
+-
+-	/* enum identifying which serial device these functions belong to. */
+-	serial_device_t device;
+-
+-	/* Pointer to the next serial interface in the linked-list. */
+-	struct pe_serial_functions *next;
+-};
++#include "pe_serial.h"
+ 
+ MARK_AS_HIBERNATE_DATA_CONST_LATE static struct pe_serial_functions* gPESF = NULL;
+ 
+@@ -690,7 +645,7 @@ static void uart_sends_force_poll(
+ 	const char *str
+ 	);
+ 
+-static void
++void
+ register_serial_functions(struct pe_serial_functions *fns)
+ {
+ 	fns->next = gPESF;
+@@ -791,10 +746,26 @@ serial_init(void)
+ 	}
+ #endif /* PI3_UART */
+ 
++#ifdef GS201_UART
++	/*
++	 * Google Tensor gs201 (Pixel 7) USI UART: claims a DT child named
++	 * "uart0" that carries compatible "google,gs201-uart"; see
++	 * pe_serial_gs201.c. Runs before the PL011 probe below so that the
++	 * Pixel's S3C-style uart0 is not claimed as a PL011.
++	 */
++	pe_serial_gs201_init();
++#endif /* GS201_UART */
++
+ #ifdef VMAPPLE_UART
+ 	if (SecureDTFindEntry("name", "uart0", &entryP) == kSuccess) {
+-		SecureDTGetProperty(entryP, "reg", (void const **)&reg_prop, &prop_size);
+-		vmapple_uart0_base_vaddr = ml_io_map(soc_base + *reg_prop, *(reg_prop + 1));
++		char const *uart0_compat = NULL;
++
++		SecureDTGetProperty(entryP, "compatible", (void const **)&uart0_compat, &prop_size);
++		/* A gs201 USI uart0 speaks S3C, not PL011; leave it to pe_serial_gs201.c. */
++		if (uart0_compat == NULL || strcmp(uart0_compat, "google,gs201-uart") != 0) {
++			SecureDTGetProperty(entryP, "reg", (void const **)&reg_prop, &prop_size);
++			vmapple_uart0_base_vaddr = ml_io_map(soc_base + *reg_prop, *(reg_prop + 1));
++		}
+ 	}
+ 
+ 	if (vmapple_uart0_base_vaddr != 0) {
 diff --git a/pexpert/conf/Makefile b/pexpert/conf/Makefile
 index 050f34a53c49..c58ff62cd419 100644
 --- a/pexpert/conf/Makefile
@@ -3377,8 +3473,31 @@ index 050f34a53c49..c58ff62cd419 100644
  ifneq (,$(wildcard $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)))
  DOCONFDEPS += $(MASTERCONFDIR)/MASTER.$(DOCONF_ARCH_CONFIG_LC).$(CURRENT_MACHINE_CONFIG_LC)
  endif
+diff --git a/pexpert/conf/files.arm64 b/pexpert/conf/files.arm64
+index 20b9ae714e79..aaa01652609a 100644
+--- a/pexpert/conf/files.arm64
++++ b/pexpert/conf/files.arm64
+@@ -5,3 +5,4 @@ pexpert/arm/pe_identify_machine.c      standard
+ pexpert/arm/pe_init.c                  standard
+ pexpert/arm/pe_kprintf.c               standard
+ pexpert/arm/pe_serial.c                standard
++pexpert/arm/pe_serial_gs201.c          standard
+diff --git a/pexpert/pexpert/arm/protos.h b/pexpert/pexpert/arm/protos.h
+index 404b50bd86e4..2f8ccab5a1dc 100644
+--- a/pexpert/pexpert/arm/protos.h
++++ b/pexpert/pexpert/arm/protos.h
+@@ -47,7 +47,8 @@ typedef enum serial_device {
+ 	SERIAL_DOCKCHANNEL=0x2,
+ 	SERIAL_PI3_UART=0x4,
+ 	SERIAL_VMAPPLE_UART=0x8,
+-	SERIAL_DCC_UART=0x10
++	SERIAL_DCC_UART=0x10,
++	SERIAL_GS201_UART=0x20
+ } serial_device_t;
+ 
+ kern_return_t serial_irq_enable(serial_device_t device);
 diff --git a/pexpert/pexpert/arm64/BCM2837.h b/pexpert/pexpert/arm64/BCM2837.h
-index d9f0723244e5..53fe4f371d7f 100644
+index d9f0723244e5..807bf87e43a0 100644
 --- a/pexpert/pexpert/arm64/BCM2837.h
 +++ b/pexpert/pexpert/arm64/BCM2837.h
 @@ -11,6 +11,15 @@
@@ -3397,15 +3516,17 @@ index d9f0723244e5..53fe4f371d7f 100644
  
  #define __ARM_ARCH__              8
  #define __ARM_VMSA__              8
-@@ -22,6 +31,7 @@
+@@ -22,6 +31,9 @@
  #ifndef ASSEMBLER
  
  #define PI3_UART
 +#define VMAPPLE_UART                    /* PL011, as found on QEMU virt */
++#define GS201_UART                      /* Google Tensor gs201 (Pixel 7) USI UART, Samsung S3C map,
++                                           selected by a DT "uart0" node with compatible "google,gs201-uart" */
  
  #define PI3_BREAK                               asm volatile("brk #0");
  
-@@ -60,8 +70,11 @@
+@@ -60,8 +72,11 @@
  #define BCM2837_PUT32(addr, value) do { *((volatile uint32_t *) addr) = value; } while(0)
  #define BCM2837_GET32(addr) *((volatile uint32_t *) addr)
  
